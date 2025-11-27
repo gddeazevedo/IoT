@@ -11,7 +11,7 @@
 #include "DHT.h"
 
 // --- CONSTANTES DO USUÁRIO (DEFINA AQUI) ---
-const int DEVICE_ID = 1;           // ID único deste dispositivo
+const int DEVICE_ID = 2;           // ID único deste dispositivo
 const double FIXED_LAT = -23.5505; // Exemplo: Latitude de SP
 const double FIXED_LON = -46.6333; // Exemplo: Longitude de SP
 
