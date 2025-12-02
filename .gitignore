@@ -1,0 +1,15 @@
+# macOS system files
+.DS_Store
+._.DS_Store
+
+# Thumbnails
+._*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.env
+iot.db
