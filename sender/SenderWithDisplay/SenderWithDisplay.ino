@@ -1,27 +1,19 @@
-/* Heltec Automation LoRa Sender + MQTT Publisher
- * Função: 
+/* Heltec Automation LoRa Sender - JSON Update
+ * * Função: 
  * 1. Lê Temp/Umidade (DHT11).
- * 2. Envia via LoRa (P2P).
- * 3. Envia via MQTT (WiFi).
+ * 2. Junta com ID, Latitude e Longitude (Constantes).
+ * 3. Formata tudo em JSON: {"id":1,"t":25.0,"h":60.0,"lat":-22.90,"lon":-43.17}
+ * 4. Envia via LoRa.
  */
 
 #include "LoRaWan_APP.h"
 #include "Arduino.h"
 #include "DHT.h"
-#include <WiFi.h>
-#include <PubSubClient.h> // Necessário instalar essa biblioteca
 
-// --- CONFIGURAÇÕES WIFI E MQTT (EDITE AQUI) ---
-const char* ssid = "AndroidA";
-const char* password = "PedroVictor";
-const char* mqtt_server = "172.28.25.105"; // Exemplo de broker público
-const int mqtt_port = 1883;
-const char* mqtt_topic = "cefet/iot";
-
-// --- CONSTANTES DO USUÁRIO ---
-const int DEVICE_ID = 2;           
-const double FIXED_LAT = -23.5505; 
-const double FIXED_LON = -46.6333; 
+// --- CONSTANTES DO USUÁRIO (DEFINA AQUI) ---
+const int DEVICE_ID = 2;           // ID único deste dispositivo
+const double FIXED_LAT = -23.5505; // Exemplo: Latitude de SP
+const double FIXED_LON = -46.6333; // Exemplo: Longitude de SP
 
 // --- Configuração do Sensor DHT11 ---
 #define DHTPIN 4     
@@ -29,8 +21,8 @@ const double FIXED_LON = -46.6333;
 DHT dht(DHTPIN, DHTTYPE);
 
 // --- Configurações do LoRa ---
-#define RF_FREQUENCY                                915000000 
-#define TX_OUTPUT_POWER                             5        
+#define RF_FREQUENCY                                915000000 // Hz
+#define TX_OUTPUT_POWER                             5        // dBm
 #define LORA_BANDWIDTH                              0         
 #define LORA_SPREADING_FACTOR                       7         
 #define LORA_CODINGRATE                             1         
@@ -39,7 +31,10 @@ DHT dht(DHTPIN, DHTTYPE);
 #define LORA_FIX_LENGTH_PAYLOAD_ON                  false
 #define LORA_IQ_INVERSION_ON                        false
 
+// AUMENTAMOS O BUFFER: Um JSON com coordenadas ocupa mais espaço que o texto anterior.
+// Antes era 30, agora 128 bytes para garantir.
 #define BUFFER_SIZE                                 128 
+
 char txpacket[BUFFER_SIZE];
 bool lora_idle=true;
 
@@ -47,130 +42,76 @@ static RadioEvents_t RadioEvents;
 void OnTxDone( void );
 void OnTxTimeout( void );
 
-// --- Objetos WiFi e MQTT ---
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-// --- Função para conectar ao WiFi ---
-void setup_wifi() {
-    delay(10);
-    Serial.println();
-    Serial.print("Conectando-se a rede: ");
-    Serial.println(ssid);
-
-    WiFi.begin(ssid, password);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-
-    Serial.println("");
-    Serial.println("WiFi conectado");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-}
-
-// --- Função para reconectar ao MQTT se cair ---
-void reconnect() {
-    // Loop até reconectar
-    while (!client.connected()) {
-        Serial.print("Tentando conexão MQTT...");
-        // Cria um ID de cliente aleatório
-        String clientId = "HeltecLoRaClient-";
-        clientId += String(random(0xffff), HEX);
-        
-        // Tenta conectar
-        if (client.connect(clientId.c_str())) {
-            Serial.println("conectado!");
-        } else {
-            Serial.print("falhou, rc=");
-            Serial.print(client.state());
-            Serial.println(" tentando novamente em 5 segundos");
-            delay(5000);
-        }
-    }
-}
-
 void setup() {
     Serial.begin(115200);
     Mcu.begin(HELTEC_BOARD,SLOW_CLK_TPYE);
     
-    // Inicializa Sensor
-    dht.begin();
-
-    // Inicializa LoRa
     RadioEvents.TxDone = OnTxDone;
     RadioEvents.TxTimeout = OnTxTimeout;
+    
     Radio.Init( &RadioEvents );
     Radio.SetChannel( RF_FREQUENCY );
     Radio.SetTxConfig( MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
                        LORA_SPREADING_FACTOR, LORA_CODINGRATE,
                        LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
                        true, 0, 0, LORA_IQ_INVERSION_ON, 3000 ); 
-    
-    // Inicializa WiFi e MQTT
-    setup_wifi();
-    client.setServer(mqtt_server, mqtt_port);
-    
-    Serial.println(F("Sistema Híbrido (LoRa + MQTT) Iniciado!"));
+                       
+    Serial.println(F("LoRa Sender Iniciado - Modo JSON!"));
+    dht.begin();
 }
 
 void loop() {
-    // Mantém a conexão MQTT ativa
-    if (!client.connected()) {
-        reconnect();
-    }
-    client.loop(); // Importante para processar mensagens recebidas e manter conexão
-
     if(lora_idle == true) {
         
         delay(2000); 
         
-        float h = 10.0 //dht.readHumidity();
-        float t = 23.5 //dht.readTemperature();
+        float h = dht.readHumidity();
+        float t = dht.readTemperature();
         
         if (isnan(h) || isnan(t)) {
             Serial.println(F("Falha na leitura do sensor DHT!"));
             return;
         }
 
-        // --- Prepara o JSON ---
+        Serial.print(F("Leitura Sensor - T: "));
+        Serial.print(t);
+        Serial.print(F(" H: "));
+        Serial.println(h);
+        
+        // --- CRIAÇÃO DO PACOTE JSON ---
+        // Estrutura: {"id":1,"t":25.5,"h":60.0,"lat":-23.550500,"lon":-46.633300}
+        // Explicação dos formatos:
+        // %d   -> Inteiro (ID)
+        // %.1f -> Float com 1 casa decimal (Temp/Umidade)
+        // %.6f -> Float com 6 casas decimais (Lat/Lon precisam de precisão)
+        
         int len = snprintf(txpacket, BUFFER_SIZE, 
                            "{\"id\":%d,\"t\":%.1f,\"h\":%.1f,\"lat\":%.6f,\"lon\":%.6f}", 
                            DEVICE_ID, t, h, FIXED_LAT, FIXED_LON);
         
+        // Verifica se o texto coube no buffer
         if (len >= BUFFER_SIZE || len < 0) {
-            Serial.println(F("ERRO: JSON muito grande!"));
+            Serial.println(F("ERRO: O JSON ficou maior que o BUFFER_SIZE!"));
             return;
         }
         
-        Serial.printf("\r\n[Dados] %s\r\n", txpacket);
+        Serial.printf("\r\nEnviando JSON (%d bytes): %s\r\n", strlen(txpacket), txpacket);
 
-        // --- 1. ENVIA VIA LORA ---
-        Serial.print("Enviando LoRa... ");
+        // Envia o pacote convertido para bytes (uint8_t *)
         Radio.Send( (uint8_t *)txpacket, strlen(txpacket) );
         lora_idle = false;
-
-        // --- 2. ENVIA VIA MQTT ---
-        Serial.print("Publicando MQTT... ");
-        if (client.publish(mqtt_topic, txpacket)) {
-            Serial.println("Sucesso!");
-        } else {
-            Serial.println("Falha ao publicar.");
-        }
     }
     
     Radio.IrqProcess( );
 }
 
 void OnTxDone( void ) {
-    Serial.println("LoRa TX concluído!");
+    Serial.println("TX concluído!");
     lora_idle = true; 
 }
 
 void OnTxTimeout( void ) {
     Radio.Sleep( );
-    Serial.println("ERRO: LoRa Timeout!");
+    Serial.println("ERRO: Timeout TX!");
     lora_idle = true; 
 }
