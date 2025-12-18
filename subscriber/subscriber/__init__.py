@@ -18,7 +18,7 @@ def on_message(client, userdata, msg):
 	payload = json.loads(payload_raw)
 
 	dispositivo = dispositivos_repository.get_dispositivo_by_id(payload["id"])
-	
+
 	if dispositivo is None:
 		dispositivos_repository.create_dispositivo(payload["id"], payload["lat"], payload["long"])
 
@@ -29,8 +29,5 @@ def run():
 	client = mqtt.Client()
 	client.on_connect = on_connect
 	client.on_message = on_message
-	
-	client.connect(IP, PORT, 60)
-	
+	client.connect(IP, PORT, 60)	
 	client.loop_forever()
-

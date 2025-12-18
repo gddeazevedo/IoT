@@ -14,8 +14,6 @@ def get_dispositivo_by_id(id_):
 		cursor = conn.cursor()
 		cursor.execute(f"select * from dispositivos where id = {id_}")
 		dispositivo = cursor.fetchone()
-		
-		print(dispositivo)
 
 		if dispositivo:
 			return dispositivo
