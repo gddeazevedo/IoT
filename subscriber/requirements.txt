@@ -1,4 +1,0 @@
-antiorm==1.2.1
-db==0.1.1
-db-sqlite3==0.0.1
-paho-mqtt==2.1.0
